@@ -7,7 +7,7 @@
 	},
 	"id": "kaspin.gapcalc",
 	"name": "Gap Calculator",
-	"version": "v1.0.0",
+	"version": "v1.1.0",
 	"developer": "Kaspin",
 	"description": "Select two objects in the editor and get the gap between them plus the minimum and recommended TPS to get through it.",
 	"tags": [
@@ -15,6 +15,36 @@
 		"utility"
 	],
 	"settings": {
+		"gamemode": {
+			"type": "string",
+			"name": "Gamemode",
+			"description": "Sets the default hitbox size. Wave also gets a fixed vertical speed (equal to portal speed, doubled when mini). Other modes use the portal speed on vertical gaps unless you set a custom speed.",
+			"default": "Wave",
+			"one-of": [
+				"Cube",
+				"Ship",
+				"Ball",
+				"UFO",
+				"Wave",
+				"Robot",
+				"Spider",
+				"Swing"
+			]
+		},
+		"mini": {
+			"type": "bool",
+			"name": "Mini size",
+			"description": "Use the mini hitbox for the chosen gamemode.",
+			"default": false
+		},
+		"custom-hitbox": {
+			"type": "float",
+			"name": "Custom hitbox size (units)",
+			"description": "Overrides the gamemode hitbox when greater than 0.",
+			"default": 0,
+			"min": 0,
+			"max": 60
+		},
 		"speed": {
 			"type": "string",
 			"name": "Speed portal",
@@ -35,16 +65,6 @@
 			"default": 0,
 			"min": 0,
 			"max": 5000
-		},
-		"player-size": {
-			"type": "string",
-			"name": "Player size",
-			"description": "Normal = 30 unit hitbox, Mini = 18 unit hitbox.",
-			"default": "Normal",
-			"one-of": [
-				"Normal",
-				"Mini"
-			]
 		},
 		"axis": {
 			"type": "string",
@@ -68,6 +88,22 @@
 				"arrows": true,
 				"slider": true
 			}
+		},
+		"button-offset-x": {
+			"type": "float",
+			"name": "Button offset X",
+			"description": "Nudges the Gap button horizontally from its default spot next to the color picker (editor units).",
+			"default": 0,
+			"min": -300,
+			"max": 300
+		},
+		"button-offset-y": {
+			"type": "float",
+			"name": "Button offset Y",
+			"description": "Nudges the Gap button vertically from its default spot (editor units).",
+			"default": 0,
+			"min": -300,
+			"max": 300
 		}
 	}
 }
