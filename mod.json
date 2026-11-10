@@ -7,7 +7,7 @@
 	},
 	"id": "kaspin.gapcalc",
 	"name": "Gap Calculator",
-	"version": "v1.1.0",
+	"version": "v1.2.0",
 	"developer": "Kaspin",
 	"description": "Select two objects in the editor and get the gap between them plus the minimum and recommended TPS to get through it.",
 	"tags": [
@@ -15,72 +15,10 @@
 		"utility"
 	],
 	"settings": {
-		"gamemode": {
-			"type": "string",
-			"name": "Gamemode",
-			"description": "Sets the default hitbox size. Wave also gets a fixed vertical speed (equal to portal speed, doubled when mini). Other modes use the portal speed on vertical gaps unless you set a custom speed.",
-			"default": "Wave",
-			"one-of": [
-				"Cube",
-				"Ship",
-				"Ball",
-				"UFO",
-				"Wave",
-				"Robot",
-				"Spider",
-				"Swing"
-			]
-		},
-		"mini": {
-			"type": "bool",
-			"name": "Mini size",
-			"description": "Use the mini hitbox for the chosen gamemode.",
-			"default": false
-		},
-		"custom-hitbox": {
-			"type": "float",
-			"name": "Custom hitbox size (units)",
-			"description": "Overrides the gamemode hitbox when greater than 0.",
-			"default": 0,
-			"min": 0,
-			"max": 60
-		},
-		"speed": {
-			"type": "string",
-			"name": "Speed portal",
-			"description": "Speed the player travels at along the gap axis.",
-			"default": "1x",
-			"one-of": [
-				"0.5x",
-				"1x",
-				"2x",
-				"3x",
-				"4x"
-			]
-		},
-		"custom-speed": {
-			"type": "float",
-			"name": "Custom speed (units/sec)",
-			"description": "Overrides the speed portal above when greater than 0. Useful for vertical gaps (ship, UFO, ball, etc.).",
-			"default": 0,
-			"min": 0,
-			"max": 5000
-		},
-		"axis": {
-			"type": "string",
-			"name": "Gap axis",
-			"description": "Auto uses the horizontal gap if there is one, otherwise the vertical gap.",
-			"default": "Auto",
-			"one-of": [
-				"Auto",
-				"Horizontal",
-				"Vertical"
-			]
-		},
 		"ticks": {
 			"type": "int",
-			"name": "Safety ticks inside gap",
-			"description": "Recommended TPS guarantees at least this many physics ticks inside the gap.",
+			"name": "Safety ticks (Recommended)",
+			"description": "When Recommended is on, the gap/TPS leaves room for this many physics ticks inside the gap. Recommended off uses 1 tick (the bare minimum).",
 			"default": 3,
 			"min": 1,
 			"max": 20,
@@ -89,10 +27,42 @@
 				"slider": true
 			}
 		},
+		"hitbox-big": {
+			"type": "float",
+			"name": "Wave hitbox: Big (units)",
+			"description": "Wave solid hitbox used by the Big button. Calibrated from the Mini value; adjust if you know better.",
+			"default": 5,
+			"min": 0.1,
+			"max": 60
+		},
+		"hitbox-mini": {
+			"type": "float",
+			"name": "Wave hitbox: Mini (units)",
+			"description": "Wave solid hitbox used by the Mini button.",
+			"default": 3,
+			"min": 0.1,
+			"max": 60
+		},
+		"hitbox-smallest": {
+			"type": "float",
+			"name": "Wave hitbox: Smallest (units)",
+			"description": "Wave solid hitbox used by the Smallest button (a guess, adjust to taste).",
+			"default": 1.5,
+			"min": 0.1,
+			"max": 60
+		},
+		"custom-speed": {
+			"type": "float",
+			"name": "Custom speed (units/sec)",
+			"description": "Overrides the speed buttons when greater than 0.",
+			"default": 0,
+			"min": 0,
+			"max": 5000
+		},
 		"button-offset-x": {
 			"type": "float",
 			"name": "Button offset X",
-			"description": "Nudges the Gap button horizontally from its default spot next to the color picker (editor units).",
+			"description": "Nudges the Gap button horizontally from its default spot beside the color picker.",
 			"default": 0,
 			"min": -300,
 			"max": 300
@@ -100,7 +70,7 @@
 		"button-offset-y": {
 			"type": "float",
 			"name": "Button offset Y",
-			"description": "Nudges the Gap button vertically from its default spot (editor units).",
+			"description": "Nudges the Gap button vertically from its default spot.",
 			"default": 0,
 			"min": -300,
 			"max": 300

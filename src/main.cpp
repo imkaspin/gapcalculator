@@ -1,50 +1,33 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/EditorUI.hpp>
 #include <Geode/ui/BasedButtonSprite.hpp>
-#include <Geode/ui/GeodeUI.hpp>
+#include <Geode/ui/Notification.hpp>
 #include <Geode/ui/Popup.hpp>
+#include <Geode/ui/TextInput.hpp>
 #include <algorithm>
 #include <cmath>
+#include <string>
+#include <vector>
 
 using namespace geode::prelude;
 
 namespace {
-	constexpr double DEFAULT_TPS = 240.0;
-	constexpr double BLOCK = 30.0;
+	constexpr double SPEEDS[] = { 251.16, 311.58, 387.42, 468.0, 576.0 };
+	constexpr char const* SPEED_NAMES[] = { "0.5x", "1x", "2x", "3x", "4x" };
+	constexpr char const* SIZE_NAMES[] = { "Big", "Mini", "Smallest" };
+	constexpr char const* MODE_NAMES[] = { "Wave", "Cube", "Ship", "Ball", "UFO", "Robot", "Spider", "Swing" };
+	constexpr int MODE_COUNT = 8;
+	constexpr char const* AXIS_NAMES[] = { "Auto", "Horiz", "Vert" };
 
-	struct ModeInfo {
-		char const* name;
-		double hitbox;
-		double miniHitbox;
-		bool wave;
-	};
-
-	// Approximate solid hitbox sizes in units. Override with "Custom hitbox size" in settings.
-	constexpr ModeInfo MODES[] = {
-		{ "Cube", 30.0, 18.0, false },
-		{ "Ship", 30.0, 18.0, false },
-		{ "Ball", 30.0, 18.0, false },
-		{ "UFO", 30.0, 18.0, false },
-		{ "Wave", 10.0, 6.0, true },
-		{ "Robot", 30.0, 18.0, false },
-		{ "Spider", 30.0, 18.0, false },
-		{ "Swing", 30.0, 18.0, false },
-	};
-
-	ModeInfo const& findMode(std::string const& name) {
-		for (auto const& m : MODES) {
-			if (name == m.name) return m;
+	// Solid hitbox in units. Wave values come from settings, other modes use 30 / 18.
+	double hitboxFor(int mode, int size) {
+		auto* mod = Mod::get();
+		if (mode == 0) {
+			if (size == 0) return mod->getSettingValue<double>("hitbox-big");
+			if (size == 1) return mod->getSettingValue<double>("hitbox-mini");
+			return mod->getSettingValue<double>("hitbox-smallest");
 		}
-		return MODES[4];
-	}
-
-	// Player speeds in units/second for each speed portal
-	double baseSpeed(std::string const& s) {
-		if (s == "0.5x") return 251.1612;
-		if (s == "2x") return 387.42;
-		if (s == "3x") return 468.0;
-		if (s == "4x") return 576.0;
-		return 311.5806; // 1x
+		return size == 0 ? 30.0 : 18.0;
 	}
 
 	// Object bounds in editor units, with a 30x30 fallback if the rect is empty
@@ -57,149 +40,324 @@ namespace {
 		return r;
 	}
 
+	// Edge-to-edge gaps. Negative = the rects overlap on that axis.
+	float gapX(CCRect const& a, CCRect const& b) {
+		return std::max(a.getMinX(), b.getMinX()) - std::min(a.getMaxX(), b.getMaxX());
+	}
+	float gapY(CCRect const& a, CCRect const& b) {
+		return std::max(a.getMinY(), b.getMinY()) - std::min(a.getMaxY(), b.getMaxY());
+	}
+
+	bool useHorizontal(int axisSel, float gx, float gy) {
+		if (axisSel == 1) return true;
+		if (axisSel == 2) return false;
+		return (gx > 0.f) || (gy <= 0.f);
+	}
+
 	std::string tpsStr(double v) {
-		if (!std::isfinite(v) || v > 10000000.0) return "infinite";
+		if (!std::isfinite(v) || v > 10000000.0) return "inf";
 		return fmt::format("{}", static_cast<long long>(std::ceil(v)));
-	}
-
-	bool visibleChain(CCNode* node) {
-		for (auto n = node; n; n = n->getParent()) {
-			if (!n->isVisible()) return false;
-		}
-		return node != nullptr;
-	}
-
-	std::string buildReport(GameObject* a, GameObject* b) {
-		auto* mod = Mod::get();
-		double ticks = static_cast<double>(std::max<int64_t>(1, mod->getSettingValue<int64_t>("ticks")));
-		auto speedName = mod->getSettingValue<std::string>("speed");
-		auto modeName = mod->getSettingValue<std::string>("gamemode");
-		auto axisName = mod->getSettingValue<std::string>("axis");
-		bool mini = mod->getSettingValue<bool>("mini");
-		double customSpeed = mod->getSettingValue<double>("custom-speed");
-		double customHitbox = mod->getSettingValue<double>("custom-hitbox");
-
-		auto const& mode = findMode(modeName);
-
-		CCRect ra = boundsOf(a);
-		CCRect rb = boundsOf(b);
-
-		// Edge-to-edge gaps. Negative = the objects overlap on that axis.
-		float gx = std::max(ra.getMinX(), rb.getMinX()) - std::min(ra.getMaxX(), rb.getMaxX());
-		float gy = std::max(ra.getMinY(), rb.getMinY()) - std::min(ra.getMaxY(), rb.getMaxY());
-
-		bool horiz;
-		if (axisName == "Horizontal") horiz = true;
-		else if (axisName == "Vertical") horiz = false;
-		else horiz = (gx > 0.f) || (gy <= 0.f);
-
-		double gap = horiz ? gx : gy;
-		double span = horiz
-			? std::max(ra.getMaxX(), rb.getMaxX()) - std::min(ra.getMinX(), rb.getMinX())
-			: std::max(ra.getMaxY(), rb.getMaxY()) - std::min(ra.getMinY(), rb.getMinY());
-
-		double portal = baseSpeed(speedName);
-		double speed = portal;
-		std::string speedNote = speedName;
-		if (customSpeed > 0.0) {
-			speed = customSpeed;
-			speedNote = "custom";
-		} else if (!horiz) {
-			if (mode.wave) {
-				speed = portal * (mini ? 2.0 : 1.0);
-				speedNote = mini ? speedName + ", mini wave x2" : speedName;
-			} else {
-				speedNote = speedName + ", vertical speed varies - set Custom speed";
-			}
-		}
-
-		double player = customHitbox > 0.0 ? customHitbox : (mini ? mode.miniHitbox : mode.hitbox);
-		double freeSpace = gap - player;
-
-		std::string out;
-		out += fmt::format(
-			"<cy>Gap X:</c> {:.2f}u ({:.2f}b)   <cy>Gap Y:</c> {:.2f}u ({:.2f}b)\n",
-			gx, gx / BLOCK, gy, gy / BLOCK
-		);
-		out += fmt::format(
-			"<cy>Mode:</c> {}{}   <cy>Axis:</c> {}\n",
-			mode.name, mini ? " (mini)" : "", horiz ? "Horizontal" : "Vertical"
-		);
-		out += fmt::format(
-			"<cy>Speed:</c> {:.2f} u/s ({})   <cy>Hitbox:</c> {:.0f}u\n",
-			speed, speedNote, player
-		);
-		out += fmt::format("<cy>Step per tick @ {:.0f} TPS:</c> {:.3f}u\n", DEFAULT_TPS, speed / DEFAULT_TPS);
-
-		if (gap <= 0.0) {
-			out += fmt::format(
-				"\n<cr>No gap on this axis</c> - the objects {} along it. Try the other axis in settings.",
-				gap == 0.0 ? "touch" : "overlap"
-			);
-			return out;
-		}
-
-		out += fmt::format("<cy>Free window:</c> {:.3f}u (gap - hitbox)\n\n", freeSpace);
-
-		if (freeSpace > 0.01) {
-			double minTps = speed / freeSpace;
-			double recTps = speed * ticks / freeSpace;
-			double ticksAtDefault = freeSpace * DEFAULT_TPS / speed;
-
-			out += fmt::format("<cg>Minimum TPS:</c> {}  (>= 1 tick inside)\n", tpsStr(minTps));
-			out += fmt::format("<cg>Recommended TPS:</c> {}  (>= {:.0f} ticks inside)\n", tpsStr(recTps), ticks);
-			out += fmt::format("<cl>Ticks inside @ {:.0f} TPS:</c> {:.2f}\n", DEFAULT_TPS, ticksAtDefault);
-			if (recTps <= DEFAULT_TPS) {
-				out += "Safe at the default TPS.";
-			} else if (minTps <= DEFAULT_TPS) {
-				out += "<co>Passable at 240 TPS but not reliably - raise TPS.</c>";
-			} else {
-				out += "<cr>Needs a TPS above the default 240 (TPS bypass).</c>";
-			}
-		} else if (freeSpace >= -0.01) {
-			out += "<cr>Gap equals the hitbox size.</c> Tick-perfect: no finite TPS guarantees a tick inside it.";
-		} else {
-			double maxClip = speed / (span + player);
-			out += fmt::format(
-				"<cr>Gap is {:.2f}u smaller than the hitbox.</c> The player can't sit inside it; the only way across is skipping over it in one tick.\n",
-				-freeSpace
-			);
-			if (maxClip < 1.0) {
-				out += "<co>Max TPS to clip across:</c> below 1 (not realistic)";
-			} else {
-				out += fmt::format("<co>Max TPS to clip across:</c> {}", static_cast<long long>(std::floor(maxClip)));
-			}
-		}
-		return out;
 	}
 }
 
 class GapPopup : public geode::Popup {
 protected:
-	bool init(std::string const& report) {
-		if (!Popup::init(360.f, 250.f)) return false;
+	Ref<EditorUI> m_editor;
+	Ref<GameObject> m_objA;
+	Ref<GameObject> m_objB;
+	CCRect m_ra;
+	CCRect m_rb;
+	bool m_hasObjs = false;
+
+	int m_size = 1;
+	int m_speed = 1;
+	int m_mode = 0;
+	int m_axis = 0;
+	bool m_rec = true;
+	double m_lastRecTps = 0.0;
+
+	TextInput* m_input = nullptr;
+	std::vector<CCMenuItemSpriteExtra*> m_sizeBtns;
+	std::vector<CCMenuItemSpriteExtra*> m_speedBtns;
+	CCMenuItemSpriteExtra* m_recBtn = nullptr;
+	CCMenuItemSpriteExtra* m_modeBtn = nullptr;
+	CCMenuItemSpriteExtra* m_axisBtn = nullptr;
+	CCLabelBMFont* m_gapLabel = nullptr;
+	CCLabelBMFont* m_tpsLabel = nullptr;
+	CCLabelBMFont* m_minGapLabel = nullptr;
+	CCLabelBMFont* m_noteLabel = nullptr;
+
+	CCMenuItemSpriteExtra* addBtn(char const* text, float scale, SEL_MenuHandler cb, int tag = 0) {
+		auto spr = ButtonSprite::create(text, "bigFont.fnt", "GJ_button_04.png", scale);
+		auto item = CCMenuItemSpriteExtra::create(spr, this, cb);
+		item->setTag(tag);
+		m_buttonMenu->addChild(item);
+		return item;
+	}
+
+	void layoutRow(std::vector<CCMenuItemSpriteExtra*> const& items, float y, float gap) {
+		float total = 0.f;
+		for (auto* it : items) total += it->getContentSize().width * it->getScale();
+		total += gap * static_cast<float>(items.size() - 1);
+		float x = (m_size.width - total) / 2.f;
+		for (auto* it : items) {
+			float w = it->getContentSize().width * it->getScale();
+			it->setPosition({ x + w / 2.f, y });
+			x += w + gap;
+		}
+	}
+
+	void styleToggle(CCMenuItemSpriteExtra* item, bool selected) {
+		auto spr = static_cast<ButtonSprite*>(item->getNormalImage());
+		if (spr->m_BGSprite) spr->m_BGSprite->setColor(selected ? ccc3(255, 255, 255) : ccc3(70, 70, 70));
+	}
+
+	CCLabelBMFont* addLabel(char const* text, float scale, float y) {
+		auto label = CCLabelBMFont::create(text, "bigFont.fnt");
+		label->setScale(scale);
+		label->setPosition({ m_size.width / 2.f, y });
+		m_mainLayer->addChild(label);
+		return label;
+	}
+
+	bool init(EditorUI* editor, GameObject* a, GameObject* b) {
+		if (!Popup::init(380.f, 270.f)) return false;
 		this->setTitle("Gap Calculator");
 
-		auto area = TextArea::create(report, "chatFont.fnt", 0.7f, 330.f, { 0.5f, 0.5f }, 16.f, false);
-		area->setPosition({ m_size.width / 2.f, m_size.height / 2.f - 4.f });
-		m_mainLayer->addChild(area);
+		m_editor = editor;
+		if (a && b) {
+			m_objA = a;
+			m_objB = b;
+			m_ra = boundsOf(a);
+			m_rb = boundsOf(b);
+			m_hasObjs = true;
+		}
 
-		auto spr = ButtonSprite::create("Settings", "goldFont.fnt", "GJ_button_04.png", .6f);
-		auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(GapPopup::onSettings));
-		btn->setPosition({ m_size.width / 2.f, 22.f });
-		m_buttonMenu->addChild(btn);
+		auto* mod = Mod::get();
+		m_size = static_cast<int>(std::clamp<int64_t>(mod->getSavedValue<int64_t>("ui-size", 1), 0, 2));
+		m_speed = static_cast<int>(std::clamp<int64_t>(mod->getSavedValue<int64_t>("ui-speed", 1), 0, 4));
+		m_mode = static_cast<int>(std::clamp<int64_t>(mod->getSavedValue<int64_t>("ui-mode", 0), 0, MODE_COUNT - 1));
+		m_axis = static_cast<int>(std::clamp<int64_t>(mod->getSavedValue<int64_t>("ui-axis", 0), 0, 2));
+		m_rec = mod->getSavedValue<int64_t>("ui-rec", 1) != 0;
+		int64_t savedTps = std::max<int64_t>(1, mod->getSavedValue<int64_t>("ui-tps", 240));
 
+		// TPS row
+		auto tpsLabel = CCLabelBMFont::create("TPS / FPS:", "bigFont.fnt");
+		tpsLabel->setScale(0.5f);
+		tpsLabel->setPosition({ 125.f, 222.f });
+		m_mainLayer->addChild(tpsLabel);
+
+		m_input = TextInput::create(110.f, "TPS", "bigFont.fnt");
+		m_input->setCommonFilter(CommonFilter::Uint);
+		m_input->setMaxCharCount(6);
+		m_input->setString(std::to_string(savedTps));
+		m_input->setPosition({ 260.f, 222.f });
+		m_input->setCallback([this](std::string const&) { this->refresh(); });
+		m_mainLayer->addChild(m_input);
+
+		// Size + Recommended row
+		for (int i = 0; i < 3; i++) {
+			m_sizeBtns.push_back(addBtn(SIZE_NAMES[i], 0.5f, menu_selector(GapPopup::onSize), i));
+		}
+		m_recBtn = addBtn("Recommended", 0.5f, menu_selector(GapPopup::onRec));
+		std::vector<CCMenuItemSpriteExtra*> row1 = m_sizeBtns;
+		row1.push_back(m_recBtn);
+		this->layoutRow(row1, 190.f, 6.f);
+
+		// Speed row
+		for (int i = 0; i < 5; i++) {
+			m_speedBtns.push_back(addBtn(SPEED_NAMES[i], 0.45f, menu_selector(GapPopup::onSpeed), i));
+		}
+		this->layoutRow(m_speedBtns, 160.f, 6.f);
+
+		// Mode + Axis row
+		m_modeBtn = addBtn("Mode: Wave", 0.4f, menu_selector(GapPopup::onMode));
+		m_axisBtn = addBtn("Axis: Auto", 0.4f, menu_selector(GapPopup::onAxis));
+		this->layoutRow({ m_modeBtn, m_axisBtn }, 130.f, 8.f);
+
+		// Readouts
+		m_gapLabel = this->addLabel("", 0.42f, 100.f);
+		m_tpsLabel = this->addLabel("", 0.42f, 82.f);
+		m_minGapLabel = this->addLabel("", 0.42f, 64.f);
+		m_noteLabel = this->addLabel("", 0.3f, 49.f);
+		m_noteLabel->setColor(ccc3(190, 190, 190));
+
+		// Action buttons
+		auto useBtn = addBtn("Use Rec TPS", 0.5f, menu_selector(GapPopup::onUseRec));
+		auto setBtn = addBtn("Set Gap", 0.6f, menu_selector(GapPopup::onSetGap));
+		this->layoutRow({ useBtn, setBtn }, 24.f, 10.f);
+
+		this->refresh();
 		return true;
 	}
 
-	void onSettings(CCObject*) {
-		openSettingsPopup(Mod::get());
+	double currentTps() {
+		std::string s = m_input ? std::string(m_input->getString()) : std::string("240");
+		double tps = s.empty() ? 0.0 : std::atof(s.c_str());
+		return std::max(1.0, tps);
+	}
+
+	double currentSpeed() {
+		double custom = Mod::get()->getSettingValue<double>("custom-speed");
+		return custom > 0.0 ? custom : SPEEDS[m_speed];
+	}
+
+	double safetyTicks() {
+		return static_cast<double>(std::max<int64_t>(1, Mod::get()->getSettingValue<int64_t>("ticks")));
+	}
+
+	void saveState() {
+		auto* mod = Mod::get();
+		mod->setSavedValue<int64_t>("ui-size", m_size);
+		mod->setSavedValue<int64_t>("ui-speed", m_speed);
+		mod->setSavedValue<int64_t>("ui-mode", m_mode);
+		mod->setSavedValue<int64_t>("ui-axis", m_axis);
+		mod->setSavedValue<int64_t>("ui-rec", m_rec ? 1 : 0);
+		mod->setSavedValue<int64_t>("ui-tps", static_cast<int64_t>(currentTps()));
+	}
+
+	void refresh() {
+		double speed = this->currentSpeed();
+		double hitbox = hitboxFor(m_mode, m_size);
+		double tps = this->currentTps();
+		double ticks = this->safetyTicks();
+		double step = speed / tps;
+		double reqGap = hitbox + (m_rec ? ticks : 1.0) * step;
+
+		// Button states
+		for (int i = 0; i < 3; i++) this->styleToggle(m_sizeBtns[i], i == m_size);
+		for (int i = 0; i < 5; i++) this->styleToggle(m_speedBtns[i], i == m_speed);
+		this->styleToggle(m_recBtn, m_rec);
+		static_cast<ButtonSprite*>(m_modeBtn->getNormalImage())->setString(
+			fmt::format("Mode: {}", MODE_NAMES[m_mode]).c_str()
+		);
+		static_cast<ButtonSprite*>(m_axisBtn->getNormalImage())->setString(
+			fmt::format("Axis: {}", AXIS_NAMES[m_axis]).c_str()
+		);
+		this->layoutRow({ m_modeBtn, m_axisBtn }, 130.f, 8.f);
+
+		// Gap found from the selected objects -> TPS
+		m_lastRecTps = 0.0;
+		bool horiz = true;
+		if (m_hasObjs) {
+			float gx = gapX(m_ra, m_rb);
+			float gy = gapY(m_ra, m_rb);
+			horiz = useHorizontal(m_axis, gx, gy);
+			double gap = horiz ? gx : gy;
+			double freeSpace = gap - hitbox;
+
+			m_gapLabel->setString(fmt::format("Gap: {:.4f} units ({})", gap, horiz ? "Horizontal" : "Vertical").c_str());
+			m_gapLabel->setColor(ccc3(255, 255, 255));
+
+			if (freeSpace > 0.001) {
+				double minTps = speed / freeSpace;
+				double recTps = speed * ticks / freeSpace;
+				m_lastRecTps = recTps;
+				m_tpsLabel->setString(fmt::format("Min TPS: {}   Rec TPS: {}", tpsStr(minTps), tpsStr(recTps)).c_str());
+				m_tpsLabel->setColor(ccc3(255, 255, 255));
+			} else if (gap <= 0.0) {
+				m_tpsLabel->setString("No gap on this axis (try the other axis)");
+				m_tpsLabel->setColor(ccc3(255, 110, 110));
+			} else {
+				m_tpsLabel->setString("Gap is too small for this hitbox");
+				m_tpsLabel->setColor(ccc3(255, 110, 110));
+			}
+		} else {
+			m_gapLabel->setString("Gap: select 2 objects first");
+			m_gapLabel->setColor(ccc3(190, 190, 190));
+			m_tpsLabel->setString("Min TPS: -   Rec TPS: -");
+			m_tpsLabel->setColor(ccc3(190, 190, 190));
+		}
+
+		// Manual TPS -> gap
+		m_minGapLabel->setString(fmt::format("{}: {:.6f} units", m_rec ? "Rec Gap" : "Min Gap", reqGap).c_str());
+
+		if (m_mode != 0 && !horiz) {
+			m_noteLabel->setString("Vertical speed varies by gamemode: portal speed used (see Custom speed)");
+		} else {
+			m_noteLabel->setString("");
+		}
+
+		this->saveState();
+	}
+
+	void onSize(CCObject* sender) {
+		m_size = static_cast<CCNode*>(sender)->getTag();
+		this->refresh();
+	}
+
+	void onSpeed(CCObject* sender) {
+		m_speed = static_cast<CCNode*>(sender)->getTag();
+		this->refresh();
+	}
+
+	void onRec(CCObject*) {
+		m_rec = !m_rec;
+		this->refresh();
+	}
+
+	void onMode(CCObject*) {
+		m_mode = (m_mode + 1) % MODE_COUNT;
+		this->refresh();
+	}
+
+	void onAxis(CCObject*) {
+		m_axis = (m_axis + 1) % 3;
+		this->refresh();
+	}
+
+	void onUseRec(CCObject*) {
+		if (m_lastRecTps <= 0.0) {
+			Notification::create("Select 2 objects with a valid gap first", NotificationIcon::Error)->show();
+			return;
+		}
+		m_input->setString(tpsStr(m_lastRecTps));
+		this->refresh();
+	}
+
+	void onSetGap(CCObject*) {
+		if (!m_hasObjs || !m_objA || !m_objB) {
+			Notification::create("Select 2 objects first", NotificationIcon::Error)->show();
+			return;
+		}
+
+		double speed = this->currentSpeed();
+		double hitbox = hitboxFor(m_mode, m_size);
+		double reqGap = hitbox + (m_rec ? this->safetyTicks() : 1.0) * (speed / this->currentTps());
+
+		float gx = gapX(m_ra, m_rb);
+		float gy = gapY(m_ra, m_rb);
+		bool horiz = useHorizontal(m_axis, gx, gy);
+		double gap = horiz ? gx : gy;
+		double delta = reqGap - gap;
+		if (std::fabs(delta) < 1e-6) {
+			Notification::create("Gap is already set", NotificationIcon::Info)->show();
+			return;
+		}
+
+		// Move the object that is further right / higher up
+		bool moveB = horiz ? (m_rb.getMidX() >= m_ra.getMidX()) : (m_rb.getMidY() >= m_ra.getMidY());
+		GameObject* mover = moveB ? m_objB.data() : m_objA.data();
+		CCPoint offset = horiz
+			? ccp(static_cast<float>(delta), 0.f)
+			: ccp(0.f, static_cast<float>(delta));
+
+		auto arr = CCArray::createWithObject(mover);
+		m_editor->m_editorLayer->addToUndoList(UndoObject::createWithTransformObjects(arr, UndoCommand::Transform), false);
+		m_editor->moveObject(mover, offset);
+
+		CCRect& r = moveB ? m_rb : m_ra;
+		r.origin.x += offset.x;
+		r.origin.y += offset.y;
+
+		Notification::create(fmt::format("Gap set to {:.6f} units", reqGap), NotificationIcon::Success)->show();
+		this->refresh();
 	}
 
 public:
-	static GapPopup* create(std::string const& report) {
+	static GapPopup* create(EditorUI* editor, GameObject* a, GameObject* b) {
 		auto ret = new GapPopup();
-		if (ret->init(report)) {
+		if (ret->init(editor, a, b)) {
 			ret->autorelease();
 			return ret;
 		}
@@ -209,6 +367,11 @@ public:
 };
 
 class $modify(GapEditorUI, EditorUI) {
+	struct Fields {
+		Ref<CCMenuItemSpriteExtra> btn;
+		float lastScale = 0.f;
+	};
+
 	bool init(LevelEditorLayer* lel) {
 		if (!EditorUI::init(lel)) return false;
 
@@ -217,14 +380,9 @@ class $modify(GapEditorUI, EditorUI) {
 		auto spr = EditorButtonSprite::create(label, EditorBaseColor::DarkGray);
 		auto btn = CCMenuItemSpriteExtra::create(spr, this, menu_selector(GapEditorUI::onGapCalc));
 		btn->setID("gap-calc-button"_spr);
+		m_fields->btn = btn;
 
-		auto menu = CCMenu::create();
-		menu->setID("gap-calc-menu"_spr);
-		menu->setVisible(false);
-		menu->addChild(btn);
-		this->addChild(menu, 20);
-
-		// Follow the edit panel every frame so the button sits next to the color picker
+		// The button lives inside the edit panel grid, so it only shows on the Edit tab
 		this->schedule(schedule_selector(GapEditorUI::updateGapBtn));
 		this->updateGapBtn(0.f);
 
@@ -232,43 +390,58 @@ class $modify(GapEditorUI, EditorUI) {
 	}
 
 	void updateGapBtn(float) {
-		auto menu = this->getChildByID("gap-calc-menu"_spr);
-		if (!menu) return;
+		auto* f = m_fields.self();
+		if (!f->btn) return;
 
-		// Row layout in the edit panel: [color picker] [Go To Layer] [Deselect]
-		auto ref = m_goToLayerBtn;
-		auto ref2 = m_deselectBtn;
-		if (!ref || !ref2 || !ref->getParent() || !ref2->getParent() || !visibleChain(ref)) {
-			menu->setVisible(false);
+		auto* menu = m_copyBtn ? typeinfo_cast<CCMenu*>(m_copyBtn->getParent()) : nullptr;
+		if (!menu || !menu->getChildren()) {
+			f->btn->setVisible(false);
 			return;
 		}
 
-		auto wp = ref->getParent()->convertToWorldSpace(ref->getPosition());
-		auto wd = ref2->getParent()->convertToWorldSpace(ref2->getPosition());
-		float stepX = wp.x - wd.x; // points from Deselect towards the color picker
-		if (std::fabs(stepX) < 1.f) {
-			menu->setVisible(false);
+		// Find the bottom row of the grid; the color picker is its first cell
+		std::vector<CCPoint> positions;
+		float minY = 1e9f;
+		for (auto child : CCArrayExt<CCNode*>(menu->getChildren())) {
+			if (child == f->btn.data()) continue;
+			if (!typeinfo_cast<CCMenuItem*>(child)) continue;
+			positions.push_back(child->getPosition());
+			minY = std::min(minY, child->getPositionY());
+		}
+		std::vector<float> row;
+		for (auto const& p : positions) {
+			if (std::fabs(p.y - minY) < 2.f) row.push_back(p.x);
+		}
+		if (positions.size() < 4 || row.size() < 2) {
+			f->btn->setVisible(false);
+			return;
+		}
+		std::sort(row.begin(), row.end());
+		float cell = row[1] - row[0];
+		if (cell < 1.f) {
+			f->btn->setVisible(false);
 			return;
 		}
 
-		// Color picker is one step further, the Gap button goes one more step beyond it
-		auto target = this->convertToNodeSpace(ccp(wp.x + 2.f * stepX, wp.y));
-		auto local1 = this->convertToNodeSpace(wp);
-		auto local2 = this->convertToNodeSpace(wd);
-		float cell = std::fabs(local1.x - local2.x);
+		if (f->btn->getParent() != menu) {
+			f->btn->removeFromParent();
+			menu->addChild(f->btn, 10);
+		}
 
 		auto* mod = Mod::get();
 		float offX = static_cast<float>(mod->getSettingValue<double>("button-offset-x"));
 		float offY = static_cast<float>(mod->getSettingValue<double>("button-offset-y"));
-		menu->setPosition({ target.x + offX, target.y + offY });
+		f->btn->setPosition({ row[0] - cell + offX, minY + offY });
 
-		if (auto btn = menu->getChildByID("gap-calc-button"_spr)) {
-			float w = btn->getContentSize().width;
-			if (w > 1.f) {
-				menu->setScale(std::clamp(cell * 0.9f / w, 0.2f, 2.f));
+		float w = f->btn->getContentSize().width;
+		if (w > 1.f) {
+			float s = std::clamp(cell * 0.85f / w, 0.2f, 2.f);
+			if (std::fabs(s - f->lastScale) > 0.001f) {
+				f->btn->setScale(s);
+				f->lastScale = s;
 			}
 		}
-		menu->setVisible(true);
+		f->btn->setVisible(true);
 	}
 
 	void onGapCalc(CCObject*) {
@@ -279,11 +452,6 @@ class $modify(GapEditorUI, EditorUI) {
 			a = typeinfo_cast<GameObject*>(objs->objectAtIndex(0));
 			b = typeinfo_cast<GameObject*>(objs->objectAtIndex(1));
 		}
-
-		std::string body = (a && b)
-			? buildReport(a, b)
-			: "Select <cy>exactly 2 objects</c> in the editor, then press this button again.";
-
-		if (auto popup = GapPopup::create(body)) popup->show();
+		if (auto popup = GapPopup::create(this, a, b)) popup->show();
 	}
 };
