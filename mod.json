@@ -1,0 +1,73 @@
+{
+	"geode": "4.6.0",
+	"gd": {
+		"win": "2.2081",
+		"android": "2.2081",
+		"mac": "2.2081"
+	},
+	"id": "kaspin.gapcalc",
+	"name": "Gap Calculator",
+	"version": "v1.0.0",
+	"developer": "Kaspin",
+	"description": "Select two objects in the editor and get the gap between them plus the minimum and recommended TPS to get through it.",
+	"tags": [
+		"editor",
+		"utility"
+	],
+	"settings": {
+		"speed": {
+			"type": "string",
+			"name": "Speed portal",
+			"description": "Speed the player travels at along the gap axis.",
+			"default": "1x",
+			"one-of": [
+				"0.5x",
+				"1x",
+				"2x",
+				"3x",
+				"4x"
+			]
+		},
+		"custom-speed": {
+			"type": "float",
+			"name": "Custom speed (units/sec)",
+			"description": "Overrides the speed portal above when greater than 0. Useful for vertical gaps (ship, UFO, ball, etc.).",
+			"default": 0,
+			"min": 0,
+			"max": 5000
+		},
+		"player-size": {
+			"type": "string",
+			"name": "Player size",
+			"description": "Normal = 30 unit hitbox, Mini = 18 unit hitbox.",
+			"default": "Normal",
+			"one-of": [
+				"Normal",
+				"Mini"
+			]
+		},
+		"axis": {
+			"type": "string",
+			"name": "Gap axis",
+			"description": "Auto uses the horizontal gap if there is one, otherwise the vertical gap.",
+			"default": "Auto",
+			"one-of": [
+				"Auto",
+				"Horizontal",
+				"Vertical"
+			]
+		},
+		"ticks": {
+			"type": "int",
+			"name": "Safety ticks inside gap",
+			"description": "Recommended TPS guarantees at least this many physics ticks inside the gap.",
+			"default": 3,
+			"min": 1,
+			"max": 20,
+			"control": {
+				"arrows": true,
+				"slider": true
+			}
+		}
+	}
+}
